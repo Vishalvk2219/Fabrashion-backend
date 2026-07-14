@@ -7,6 +7,13 @@ import './components';
 // Add one line here per new module (catalog, cart, order, trial, sync, ...).
 import '@/routes/health.openapi';
 import '@/modules/auth/auth.openapi';
+import '@/modules/catalog/catalog.openapi';
+import '@/modules/address/address.openapi';
+import '@/modules/cart/cart.openapi';
+import '@/modules/checkout/checkout.openapi';
+import '@/modules/trial/trial.openapi';
+import '@/modules/staff/staff.openapi';
+import '@/modules/admin/admin.openapi';
 
 /**
  * Builds the OpenAPI document from the Zod schemas the API validates with.
@@ -67,13 +74,34 @@ export function getOpenApiDocument(): OpenApiDocument {
       title: 'Fabrashion API',
       version: API_VERSION,
       description: DESCRIPTION,
-      contact: { name: 'Fabrashion Engineering', email: 'support@teachtotech.in' },
+      contact: { name: 'Fabrashion Engineering' },
     },
     // Add staging/production entries here once the API is deployed; clients
     // (Apidog, Postman) turn each one into a switchable environment.
     servers: [{ url: 'http://localhost:4000', description: 'Local development' }],
+    // Ordered as a client meets them: browse → buy → try → back-office.
     tags: [
-      { name: 'Auth', description: 'Registration, sign-in, token rotation, and the current user.' },
+      { name: 'Auth', description: 'Phone-OTP sign-in, token rotation, and the current user.' },
+      { name: 'Catalog', description: 'Categories, products, and live stock. Public — no token needed.' },
+      { name: 'Cart', description: 'The signed-in user’s cart. Server-authoritative pricing.' },
+      { name: 'Addresses', description: 'Saved shipping addresses.' },
+      {
+        name: 'Orders',
+        description: 'Checkout and the customer’s own orders.',
+      },
+      {
+        name: 'Trials',
+        description: 'At-home trials: eligibility, booking, and the keep/return flow.',
+      },
+      {
+        name: 'Staff',
+        description:
+          'Store-ops back office — inventory and the fulfilment board. **STAFF or ADMIN only**, and always scoped to the caller’s own boutique.',
+      },
+      {
+        name: 'Admin',
+        description: 'Business back office — KPIs, team, catalogue, and all orders. **ADMIN only**.',
+      },
       { name: 'System', description: 'Probes and service metadata. No authentication required.' },
     ],
   });
