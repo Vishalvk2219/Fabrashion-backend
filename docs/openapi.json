@@ -1,0 +1,1314 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Fabrashion API",
+    "version": "0.1.0",
+    "description": "Backend for **Fabrashion**, a premium clothing store: catalogue, cart, orders, and at-home trials.\nThis spec is generated from the Zod schemas the server validates against, so it always matches the running code.\n\n## Authentication\nEverything except `/health` and the auth entry points expects a bearer token:\n\n1. `POST /api/v1/auth/register` or `/login` → returns `{ user, accessToken, refreshToken }`.\n2. Send `Authorization: Bearer <accessToken>` on subsequent calls.\n3. The access token lasts **15 minutes**. On a 401, call `POST /api/v1/auth/refresh` with your refresh token and retry.\n\nRefresh tokens are **single-use and rotated**: each refresh returns a new one and kills the old. Persist the new pair every time, and never run two refreshes concurrently — replaying a rotated token is read as theft and signs the user out of every device.\n\n## Errors\nEvery failure uses one envelope — see the `Error` schema:\n\n```json\n{ \"error\": { \"code\": \"UNAUTHORIZED\", \"message\": \"Invalid email or password\" } }\n```\n\nBranch on `error.code` (stable), never on `message` (copy, may change). A 422 adds `details.fieldErrors`, mapping each rejected field to its messages — render those inline on the form.\n\n## Conventions\n- **Money** is always an integer count of **paise** (₹1 = 100 paise), in fields suffixed `Paise`. Never floats.\n- **Timestamps** are UTC ISO-8601 strings.\n- **Ids** are UUIDs.\n- **Phone numbers** are submitted as 10 digits and stored E.164 (`+91XXXXXXXXXX`).\n- Every response carries an **`x-request-id`**; send your own to correlate, and quote it in bug reports.\n\n## Rate limits\nThe `/auth/*` endpoints allow **30 requests per 15 minutes per IP**. Over that you get a 429 with `Retry-After`.",
+    "contact": {
+      "name": "Fabrashion Engineering",
+      "email": "support@teachtotech.in"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:4000",
+      "description": "Local development"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Auth",
+      "description": "Registration, sign-in, token rotation, and the current user."
+    },
+    {
+      "name": "System",
+      "description": "Probes and service metadata. No authentication required."
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Short-lived (15 min) access token from `POST /auth/login`, sent as `Authorization: Bearer <accessToken>`. When it expires the API returns 401 UNAUTHORIZED — exchange the refresh token at `POST /auth/refresh` for a new pair."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "BAD_REQUEST",
+                  "UNAUTHORIZED",
+                  "FORBIDDEN",
+                  "NOT_FOUND",
+                  "CONFLICT",
+                  "VALIDATION_ERROR",
+                  "TOO_MANY_REQUESTS",
+                  "INTERNAL_ERROR"
+                ],
+                "description": "Stable, machine-readable code. Branch on this, never on `message`.",
+                "example": "UNAUTHORIZED"
+              },
+              "message": {
+                "type": "string",
+                "description": "Human-readable explanation. Safe to surface to the user.",
+                "example": "Invalid email or password"
+              },
+              "details": {
+                "type": "object",
+                "description": "Optional, code-specific context. See `ValidationError` for the 422 shape."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "Every non-2xx response from this API uses this envelope."
+      },
+      "ValidationError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "VALIDATION_ERROR"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "example": "Validation failed"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "formErrors": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Errors not attributable to a single field.",
+                    "example": []
+                  },
+                  "fieldErrors": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "description": "Field name → list of messages. Render these next to the input.",
+                    "example": {
+                      "email": [
+                        "Enter a valid email"
+                      ],
+                      "password": [
+                        "Password must be at least 8 characters"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "formErrors",
+                  "fieldErrors"
+                ]
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "details"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "Request body failed schema validation."
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded"
+            ],
+            "description": "`ok` only when every dependency is up; otherwise `degraded`.",
+            "example": "ok"
+          },
+          "uptime": {
+            "type": "number",
+            "description": "Seconds since the process started.",
+            "example": 1284.51
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-07-14T09:12:04.512Z"
+          },
+          "services": {
+            "type": "object",
+            "properties": {
+              "db": {
+                "type": "string",
+                "enum": [
+                  "up",
+                  "down"
+                ],
+                "example": "up"
+              },
+              "redis": {
+                "type": "string",
+                "enum": [
+                  "up",
+                  "down"
+                ],
+                "example": "up"
+              }
+            },
+            "required": [
+              "db",
+              "redis"
+            ],
+            "description": "Per-dependency reachability, each checked with a 2s timeout."
+          }
+        },
+        "required": [
+          "status",
+          "uptime",
+          "timestamp",
+          "services"
+        ],
+        "description": "Liveness/readiness snapshot."
+      },
+      "ApiRoot": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "fabrashion-backend"
+          },
+          "version": {
+            "type": "string",
+            "example": "v1"
+          },
+          "status": {
+            "type": "string",
+            "example": "ok"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "status"
+        ]
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "example": "b1d1f0a4-4c9e-4b9a-9c1e-2f3a4b5c6d7e"
+          },
+          "fullName": {
+            "type": "string",
+            "example": "Aarav Sharma"
+          },
+          "email": {
+            "type": "string",
+            "nullable": true,
+            "format": "email",
+            "description": "Null for phone-only accounts (Phase 1b).",
+            "example": "aarav.sharma@example.com"
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true,
+            "description": "E.164, always +91-prefixed. Null for email-only accounts.",
+            "example": "+919876543210"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "CUSTOMER",
+              "STAFF",
+              "ADMIN"
+            ],
+            "description": "Authorisation role. Customers may only touch their own resources.",
+            "example": "CUSTOMER"
+          }
+        },
+        "required": [
+          "id",
+          "fullName",
+          "email",
+          "phone",
+          "role"
+        ],
+        "description": "The authenticated user. Never contains credentials."
+      },
+      "TokenPair": {
+        "type": "object",
+        "properties": {
+          "accessToken": {
+            "type": "string",
+            "description": "JWT, valid 15 minutes. Send as `Authorization: Bearer <accessToken>`.",
+            "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiMWQxZjBhNC00YzllLTRiOWEtOWMxZS0yZjNhNGI1YzZkN2UiLCJyb2xlIjoiQ1VTVE9NRVIiLCJpYXQiOjE3NTIzOTA0MDAsImV4cCI6MTc1MjM5MTMwMH0.9x2QpQ0rQ6m2mVQ0F6bqK3nqfQ0X1yQ0m8rQ0y9kQ2s"
+          },
+          "refreshToken": {
+            "type": "string",
+            "description": "Opaque token, valid 30 days, single-use: every refresh rotates it. Store it in secure storage (Keychain / Keystore), never in plain AsyncStorage — and replace it with the one each refresh returns.",
+            "example": "3f6d1c9a5b8e4d2f7a0c1e9b4d6f8a2c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f"
+          }
+        },
+        "required": [
+          "accessToken",
+          "refreshToken"
+        ],
+        "description": "A freshly issued access + refresh token pair."
+      },
+      "AuthResponse": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/User"
+          },
+          "accessToken": {
+            "type": "string",
+            "description": "JWT, valid 15 minutes. Send as `Authorization: Bearer <accessToken>`.",
+            "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiMWQxZjBhNC00YzllLTRiOWEtOWMxZS0yZjNhNGI1YzZkN2UiLCJyb2xlIjoiQ1VTVE9NRVIiLCJpYXQiOjE3NTIzOTA0MDAsImV4cCI6MTc1MjM5MTMwMH0.9x2QpQ0rQ6m2mVQ0F6bqK3nqfQ0X1yQ0m8rQ0y9kQ2s"
+          },
+          "refreshToken": {
+            "type": "string",
+            "description": "Opaque token, valid 30 days, single-use: every refresh rotates it. Store it in secure storage (Keychain / Keystore), never in plain AsyncStorage — and replace it with the one each refresh returns.",
+            "example": "3f6d1c9a5b8e4d2f7a0c1e9b4d6f8a2c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f"
+          }
+        },
+        "required": [
+          "user",
+          "accessToken",
+          "refreshToken"
+        ],
+        "description": "The signed-in user plus a new token pair."
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "properties": {
+          "fullName": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100,
+            "description": "Customer full name.",
+            "example": "Aarav Sharma"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "Login email. Normalised to lowercase; must not already be in use.",
+            "example": "aarav.sharma@example.com"
+          },
+          "phone": {
+            "type": "string",
+            "pattern": "^[6-9]\\d{9}$",
+            "description": "Indian mobile number: 10 digits starting 6-9, no country code. Stored as +91XXXXXXXXXX.",
+            "example": "9876543210"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128,
+            "format": "password",
+            "description": "8-128 characters.",
+            "example": "Password123!"
+          }
+        },
+        "required": [
+          "fullName",
+          "email",
+          "phone",
+          "password"
+        ]
+      },
+      "LoginRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "example": "customer@shop.test"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "format": "password",
+            "example": "Password123!"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ]
+      },
+      "RefreshRequest": {
+        "type": "object",
+        "properties": {
+          "refreshToken": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The opaque refresh token last issued by register, login, or refresh.",
+            "example": "3f6d1c9a5b8e4d2f7a0c1e9b4d6f8a2c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f"
+          }
+        },
+        "required": [
+          "refreshToken"
+        ]
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "tags": [
+          "System"
+        ],
+        "summary": "Liveness / readiness probe",
+        "security": [],
+        "description": "Reports the reachability of Postgres and Redis.\n\nDeliberately returns **200 even when a dependency is down** — the body says `degraded` and names the offender. Probes should therefore assert on `status`, not merely on the HTTP code. Unauthenticated, unversioned, and safe to poll.",
+        "responses": {
+          "200": {
+            "description": "Always returned, whether healthy or degraded.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                },
+                "examples": {
+                  "healthy": {
+                    "summary": "All dependencies up",
+                    "value": {
+                      "status": "ok",
+                      "uptime": 1284.51,
+                      "timestamp": "2026-07-14T09:12:04.512Z",
+                      "services": {
+                        "db": "up",
+                        "redis": "up"
+                      }
+                    }
+                  },
+                  "degraded": {
+                    "summary": "Redis unreachable — still 200",
+                    "value": {
+                      "status": "degraded",
+                      "uptime": 12.09,
+                      "timestamp": "2026-07-14T09:12:04.512Z",
+                      "services": {
+                        "db": "up",
+                        "redis": "down"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error. Nothing is leaked; check logs by `x-request-id`.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Something went wrong. Please try again."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1": {
+      "get": {
+        "operationId": "getApiRoot",
+        "tags": [
+          "System"
+        ],
+        "summary": "API root",
+        "security": [],
+        "description": "Identifies the service and the API version served at this prefix.",
+        "responses": {
+          "200": {
+            "description": "Service identity.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiRoot"
+                },
+                "example": {
+                  "name": "fabrashion-backend",
+                  "version": "v1",
+                  "status": "ok"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error. Nothing is leaked; check logs by `x-request-id`.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Something went wrong. Please try again."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "operationId": "register",
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Create an account",
+        "security": [],
+        "description": "Registers an email/password account and signs the user straight in — the response already carries a token pair, so no follow-up login call is needed.\n\nThe phone number is stored (prefixed `+91`) for delivery and the upcoming OTP login; it is not verified yet. Email and phone must both be unused, otherwise 409.",
+        "requestBody": {
+          "required": true,
+          "description": "New account details.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Account created and signed in.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              },
+              "RateLimit": {
+                "description": "Remaining quota for the current window, e.g. `limit=30, remaining=27, reset=840`.",
+                "schema": {
+                  "type": "string",
+                  "example": "limit=30, remaining=27, reset=840"
+                }
+              },
+              "RateLimit-Policy": {
+                "description": "The policy in force, e.g. `30;w=900` (30 requests per 900s).",
+                "schema": {
+                  "type": "string",
+                  "example": "30;w=900"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                },
+                "example": {
+                  "user": {
+                    "id": "b1d1f0a4-4c9e-4b9a-9c1e-2f3a4b5c6d7e",
+                    "fullName": "Aarav Sharma",
+                    "email": "aarav.sharma@example.com",
+                    "phone": "+919876543210",
+                    "role": "CUSTOMER"
+                  },
+                  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiMWQxZjBhNC00YzllLTRiOWEtOWMxZS0yZjNhNGI1YzZkN2UiLCJyb2xlIjoiQ1VTVE9NRVIiLCJpYXQiOjE3NTIzOTA0MDAsImV4cCI6MTc1MjM5MTMwMH0.9x2QpQ0rQ6m2mVQ0F6bqK3nqfQ0X1yQ0m8rQ0y9kQ2s",
+                  "refreshToken": "3f6d1c9a5b8e4d2f7a0c1e9b4d6f8a2c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with existing state.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "CONFLICT",
+                    "message": "An account with this email or phone already exists"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request body failed validation. `details.fieldErrors` maps field → messages.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationError"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": {
+                      "formErrors": [],
+                      "fieldErrors": {
+                        "email": [
+                          "Enter a valid email"
+                        ],
+                        "phone": [
+                          "Enter a valid 10-digit mobile number"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded: 30 requests per 15 minutes per IP across the auth endpoints. Back off and retry after `Retry-After` seconds.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              },
+              "RateLimit": {
+                "description": "Remaining quota for the current window, e.g. `limit=30, remaining=27, reset=840`.",
+                "schema": {
+                  "type": "string",
+                  "example": "limit=30, remaining=27, reset=840"
+                }
+              },
+              "RateLimit-Policy": {
+                "description": "The policy in force, e.g. `30;w=900` (30 requests per 900s).",
+                "schema": {
+                  "type": "string",
+                  "example": "30;w=900"
+                }
+              },
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "type": "integer",
+                  "example": 840
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "TOO_MANY_REQUESTS",
+                    "message": "Too many attempts. Please try again later."
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error. Nothing is leaked; check logs by `x-request-id`.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Something went wrong. Please try again."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "operationId": "login",
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Sign in with email + password",
+        "security": [],
+        "description": "Exchanges credentials for a token pair.\n\nA wrong password and an unknown email return the *same* 401, on purpose: the API will not confirm whether an address is registered.\n\nSeeded dev accounts: `customer@shop.test`, `staff@shop.test`, `admin@shop.test` — all with password `Password123!`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              },
+              "RateLimit": {
+                "description": "Remaining quota for the current window, e.g. `limit=30, remaining=27, reset=840`.",
+                "schema": {
+                  "type": "string",
+                  "example": "limit=30, remaining=27, reset=840"
+                }
+              },
+              "RateLimit-Policy": {
+                "description": "The policy in force, e.g. `30;w=900` (30 requests per 900s).",
+                "schema": {
+                  "type": "string",
+                  "example": "30;w=900"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                },
+                "example": {
+                  "user": {
+                    "id": "b1d1f0a4-4c9e-4b9a-9c1e-2f3a4b5c6d7e",
+                    "fullName": "Aarav Sharma",
+                    "email": "aarav.sharma@example.com",
+                    "phone": "+919876543210",
+                    "role": "CUSTOMER"
+                  },
+                  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiMWQxZjBhNC00YzllLTRiOWEtOWMxZS0yZjNhNGI1YzZkN2UiLCJyb2xlIjoiQ1VTVE9NRVIiLCJpYXQiOjE3NTIzOTA0MDAsImV4cCI6MTc1MjM5MTMwMH0.9x2QpQ0rQ6m2mVQ0F6bqK3nqfQ0X1yQ0m8rQ0y9kQ2s",
+                  "refreshToken": "3f6d1c9a5b8e4d2f7a0c1e9b4d6f8a2c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unknown email or wrong password (deliberately indistinguishable).",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Invalid email or password"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request body failed validation. `details.fieldErrors` maps field → messages.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationError"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": {
+                      "formErrors": [],
+                      "fieldErrors": {
+                        "email": [
+                          "Enter a valid email"
+                        ],
+                        "phone": [
+                          "Enter a valid 10-digit mobile number"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded: 30 requests per 15 minutes per IP across the auth endpoints. Back off and retry after `Retry-After` seconds.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              },
+              "RateLimit": {
+                "description": "Remaining quota for the current window, e.g. `limit=30, remaining=27, reset=840`.",
+                "schema": {
+                  "type": "string",
+                  "example": "limit=30, remaining=27, reset=840"
+                }
+              },
+              "RateLimit-Policy": {
+                "description": "The policy in force, e.g. `30;w=900` (30 requests per 900s).",
+                "schema": {
+                  "type": "string",
+                  "example": "30;w=900"
+                }
+              },
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "type": "integer",
+                  "example": 840
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "TOO_MANY_REQUESTS",
+                    "message": "Too many attempts. Please try again later."
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error. Nothing is leaked; check logs by `x-request-id`.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Something went wrong. Please try again."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "operationId": "refreshTokens",
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Rotate the token pair",
+        "security": [],
+        "description": "Trades a valid refresh token for a brand-new access + refresh pair. Call this when a request fails with 401 because the 15-minute access token expired, then retry the original request.\n\n**Rotation is mandatory:** the token you send is revoked immediately, so you must persist the pair this endpoint returns. Replaying an already-rotated token is treated as theft — the entire token family for that user is revoked and every session is signed out. Serialise your refresh calls (one in flight at a time) so two concurrent 401s do not trigger this.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A new pair. The refresh token you sent is now dead — store these instead.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              },
+              "RateLimit": {
+                "description": "Remaining quota for the current window, e.g. `limit=30, remaining=27, reset=840`.",
+                "schema": {
+                  "type": "string",
+                  "example": "limit=30, remaining=27, reset=840"
+                }
+              },
+              "RateLimit-Policy": {
+                "description": "The policy in force, e.g. `30;w=900` (30 requests per 900s).",
+                "schema": {
+                  "type": "string",
+                  "example": "30;w=900"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenPair"
+                },
+                "example": {
+                  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiMWQxZjBhNC00YzllLTRiOWEtOWMxZS0yZjNhNGI1YzZkN2UiLCJyb2xlIjoiQ1VTVE9NRVIiLCJpYXQiOjE3NTIzOTA0MDAsImV4cCI6MTc1MjM5MTMwMH0.9x2QpQ0rQ6m2mVQ0F6bqK3nqfQ0X1yQ0m8rQ0y9kQ2s",
+                  "refreshToken": "3f6d1c9a5b8e4d2f7a0c1e9b4d6f8a2c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The refresh token is unknown, expired, or already rotated (family revoked).",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Invalid or expired refresh token"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request body failed validation. `details.fieldErrors` maps field → messages.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationError"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": {
+                      "formErrors": [],
+                      "fieldErrors": {
+                        "email": [
+                          "Enter a valid email"
+                        ],
+                        "phone": [
+                          "Enter a valid 10-digit mobile number"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded: 30 requests per 15 minutes per IP across the auth endpoints. Back off and retry after `Retry-After` seconds.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              },
+              "RateLimit": {
+                "description": "Remaining quota for the current window, e.g. `limit=30, remaining=27, reset=840`.",
+                "schema": {
+                  "type": "string",
+                  "example": "limit=30, remaining=27, reset=840"
+                }
+              },
+              "RateLimit-Policy": {
+                "description": "The policy in force, e.g. `30;w=900` (30 requests per 900s).",
+                "schema": {
+                  "type": "string",
+                  "example": "30;w=900"
+                }
+              },
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "type": "integer",
+                  "example": 840
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "TOO_MANY_REQUESTS",
+                    "message": "Too many attempts. Please try again later."
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error. Nothing is leaked; check logs by `x-request-id`.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Something went wrong. Please try again."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "operationId": "logout",
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Sign out (revoke a refresh token)",
+        "security": [],
+        "description": "Revokes the given refresh token so it can never be rotated again. Idempotent: an unknown or already-revoked token still returns 204, so a client can always sign out cleanly.\n\nThe access token is *not* revoked — being a stateless JWT it stays valid until it expires (≤15 min). Discard it client-side.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Signed out. No body.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request body failed validation. `details.fieldErrors` maps field → messages.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationError"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": {
+                      "formErrors": [],
+                      "fieldErrors": {
+                        "email": [
+                          "Enter a valid email"
+                        ],
+                        "phone": [
+                          "Enter a valid 10-digit mobile number"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error. Nothing is leaked; check logs by `x-request-id`.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Something went wrong. Please try again."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "operationId": "getCurrentUser",
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Get the signed-in user",
+        "description": "Returns the profile behind the bearer token. Use it to restore a session on app launch and to check whether a stored access token is still good.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The authenticated user.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                },
+                "example": {
+                  "id": "b1d1f0a4-4c9e-4b9a-9c1e-2f3a4b5c6d7e",
+                  "fullName": "Aarav Sharma",
+                  "email": "aarav.sharma@example.com",
+                  "phone": "+919876543210",
+                  "role": "CUSTOMER"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or expired access token.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing or malformed Authorization header"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error. Nothing is leaked; check logs by `x-request-id`.",
+            "headers": {
+              "x-request-id": {
+                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
+                "schema": {
+                  "type": "string",
+                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Something went wrong. Please try again."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

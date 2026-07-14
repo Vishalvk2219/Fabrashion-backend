@@ -1,0 +1,18 @@
+# Standards gate for the generated spec: `npm run docs:lint`.
+# The spec itself is generated (src/docs/**) — fix findings there, never in
+# docs/openapi.json. Rules are switched off only with a reason; anything that
+# shows up here beyond these is a genuine problem worth fixing.
+extends:
+  - recommended
+
+rules:
+  # The API isn't deployed yet, so localhost really is the only server. Delete
+  # this exception once a real host is added to `servers` in src/docs/openapi.ts.
+  no-server-example.com: off
+
+  # Private, proprietary API — there is no license to point at.
+  info-license: off
+
+  # /health and the API root are probes. Their only failure mode is a 5xx, and
+  # inventing a 4xx just to satisfy the rule would misdescribe them.
+  operation-4xx-response: off

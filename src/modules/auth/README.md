@@ -13,6 +13,9 @@ Identity + session for the platform. Email/password login (Phase 1a); phone-OTP 
 
 `user = { id, fullName, email, phone, role }`. Errors use `{ error: { code, message } }`.
 
+Machine-readable contract: **`auth.openapi.ts`** → `docs/openapi.json` (browse it at `/docs`).
+It reuses `auth.schema` for request bodies, so the spec and the validation can never disagree.
+
 ## Layers
 `auth.route → auth.controller → auth.service → auth.repository → Prisma`. Zod in `auth.schema`,
 response shaping in `auth.mapper`.

@@ -24,6 +24,14 @@
     "sourceMap": true,
     "declaration": false
   },
-  "include": ["src", "prisma", "tsup.config.ts", "vitest.config.ts", "eslint.config.mjs"],
+  "include": [
+    "src",
+    "prisma",
+    "scripts",
+    "tsup.config.ts",
+    "vitest.config.ts",
+    "eslint.config.mjs",
+    "prisma.config.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

@@ -6,6 +6,7 @@ import { requestLogger } from '@/middleware/requestLogger';
 import { errorHandler } from '@/middleware/errorHandler';
 import { notFound } from '@/middleware/notFound';
 import { apiRouter } from '@/routes';
+import { docsRouter } from '@/routes/docs.route';
 import { healthRouter } from '@/routes/health.route';
 
 /**
@@ -24,6 +25,8 @@ export function createApp() {
 
   // Health at root (probes/load balancers hit /health).
   app.use('/', healthRouter);
+  // API reference + the OpenAPI spec it renders (/docs, /docs/openapi.json|yaml).
+  app.use('/docs', docsRouter);
   // Versioned API.
   app.use('/api/v1', apiRouter);
 
