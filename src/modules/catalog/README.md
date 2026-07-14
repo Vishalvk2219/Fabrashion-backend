@@ -19,7 +19,7 @@ and availability. Read-only; admin catalog writes are a later (back-office) phas
 `Product = { id, name, slug, description, brand, department, trialEligible, images[], variants[] }`;
 `ProductVariant = { id, sku, size, colorName, colorHex, pricePaise, mrpPaise, availableQty }`;
 `Paginated<T> = { data, meta:{ page, limit, total, totalPages } }`. These mirror
-`ecommerce-mobile/src/features/catalog/schema.ts` exactly, so the app swaps preview→live with no UI change.
+`fabrashion-mobile/src/features/catalog/schema.ts` exactly, so the app swaps preview→live with no UI change.
 
 ## `availableQty` (computed, never stored raw)
 Sellable-now stock summed across **online** locations only = every warehouse + stores with

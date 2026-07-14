@@ -1,6 +1,6 @@
 # fabrashion-backend
 
-Premium-clothing e-commerce API — **Express 5 + TypeScript + Prisma + PostgreSQL + Redis**.
+Fabrashion — premium clothing commerce API — **Express 5 + TypeScript + Prisma + PostgreSQL + Redis**.
 
 This is the backend repo. The mobile app lives in a separate repo (`fabrashion-mobile`).
 System design and per-feature plans live in `../plans/`.

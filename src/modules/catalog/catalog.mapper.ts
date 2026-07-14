@@ -7,7 +7,7 @@ import type { ProductWithAvailability, ProductWithRelations } from './catalog.re
 export type { Paginated };
 export { paginate };
 
-// ── Public DTOs (match ecommerce-mobile/src/features/catalog/schema.ts) ──
+// ── Public DTOs (match fabrashion-mobile/src/features/catalog/schema.ts) ──
 export interface CategoryDTO {
   id: string;
   name: string;
