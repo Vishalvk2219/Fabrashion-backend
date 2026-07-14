@@ -28,7 +28,7 @@ This spec is generated from the Zod schemas the server validates against, so it 
 ## Authentication
 Everything except \`/health\` and the auth entry points expects a bearer token:
 
-1. \`POST /api/v1/auth/register\` or \`/login\` → returns \`{ user, accessToken, refreshToken }\`.
+1. \`POST /api/v1/auth/otp/request\` with a phone number, then \`POST /api/v1/auth/otp/verify\` with the code → returns \`{ user, accessToken, refreshToken }\`. Phone-OTP is the only login method; first verify creates the account.
 2. Send \`Authorization: Bearer <accessToken>\` on subsequent calls.
 3. The access token lasts **15 minutes**. On a 401, call \`POST /api/v1/auth/refresh\` with your refresh token and retry.
 

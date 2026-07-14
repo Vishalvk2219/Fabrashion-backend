@@ -14,7 +14,7 @@ export const registry = new OpenAPIRegistry();
 
 /**
  * Mount prefix of the versioned API. Paths are registered in full (e.g.
- * `/api/v1/auth/login`) rather than relative to a base URL, because `/health`
+ * `/api/v1/auth/otp/verify`) rather than relative to a base URL, because `/health`
  * lives outside the prefix — so the `servers` entry is the bare origin and
  * every path in the spec is exactly what you call.
  */
@@ -29,6 +29,6 @@ export const bearerAuth = registry.registerComponent('securitySchemes', 'bearerA
   scheme: 'bearer',
   bearerFormat: 'JWT',
   description:
-    'Short-lived (15 min) access token from `POST /auth/login`, sent as `Authorization: Bearer <accessToken>`. ' +
+    'Short-lived (15 min) access token from `POST /auth/otp/verify`, sent as `Authorization: Bearer <accessToken>`. ' +
     'When it expires the API returns 401 UNAUTHORIZED — exchange the refresh token at `POST /auth/refresh` for a new pair.',
 });

@@ -2,7 +2,8 @@ import { z } from '@/lib/zod';
 import { responses, rateLimitHeaders, requestIdHeader } from '@/docs/components';
 import { API_V1, bearerAuth, registry } from '@/docs/registry';
 import type { AuthResponseDTO, AuthUserDTO } from './auth.mapper';
-import { loginSchema, refreshSchema, registerSchema } from './auth.schema';
+import type { OtpRequestResult } from './auth.service';
+import { otpRequestSchema, otpVerifySchema, refreshSchema } from './auth.schema';
 
 /**
  * OpenAPI description of the auth module. Request bodies reuse the very Zod
@@ -85,32 +86,52 @@ const authResponseExample = {
   refreshToken: refreshTokenExample,
 };
 
+export const otpRequestResponseSchema = registry.register(
+  'OtpRequestResponse',
+  z
+    .object({
+      expiresInSec: z.number().int().openapi({
+        description: 'Seconds until the code expires. Drives the resend countdown in the app.',
+        example: 300,
+      }),
+      devCode: z.string().optional().openapi({
+        description:
+          'The OTP itself, so the flow is walkable without an SMS provider. Only present when `OTP_EXPOSE_CODE` is on and `NODE_ENV` is not production — never in production.',
+        example: '1234',
+      }),
+    })
+    .openapi({ description: 'Confirmation that an OTP was sent. Never contains the user.' }),
+) satisfies z.ZodType<OtpRequestResult>;
+
 registry.registerPath({
   method: 'post',
-  path: `${API_V1}/auth/register`,
-  operationId: 'register',
+  path: `${API_V1}/auth/otp/request`,
+  operationId: 'requestOtp',
   tags: [TAG],
-  summary: 'Create an account',
+  summary: 'Send a login OTP to a phone number',
   security: [], // public
   description:
-    'Registers an email/password account and signs the user straight in — the response already carries a token pair, so no follow-up login call is needed.\n\n' +
-    'The phone number is stored (prefixed `+91`) for delivery and the upcoming OTP login; it is not verified yet. Email and phone must both be unused, otherwise 409.',
+    'Sends a 4-digit code by SMS to the given mobile number. This is step 1 of the only login method — there is no password anywhere in the API; email is profile data, never a credential.\n\n' +
+    'The response is deliberately identical whether or not the number already has an account: the API will not confirm whether a phone is registered. An account is created on first successful verify.\n\n' +
+    'A resend cooldown applies on top of the route rate limiter, so calling this in a tight loop returns 429.',
   request: {
     body: {
       required: true,
-      description: 'New account details.',
-      content: { 'application/json': { schema: registerSchema } },
+      description: 'The mobile number to send the code to.',
+      content: { 'application/json': { schema: otpRequestSchema } },
     },
   },
   responses: {
-    201: {
-      description: 'Account created and signed in.',
+    200: {
+      description: 'Code sent (or re-sent). Prompt the user for it, then call `/auth/otp/verify`.',
       headers: authHeaders,
       content: {
-        'application/json': { schema: authResponseSchema, example: authResponseExample },
+        'application/json': {
+          schema: otpRequestResponseSchema,
+          example: { expiresInSec: 300, devCode: '1234' },
+        },
       },
     },
-    409: responses.conflict,
     422: responses.validation,
     429: responses.tooManyRequests,
     500: responses.internal,
@@ -119,19 +140,19 @@ registry.registerPath({
 
 registry.registerPath({
   method: 'post',
-  path: `${API_V1}/auth/login`,
-  operationId: 'login',
+  path: `${API_V1}/auth/otp/verify`,
+  operationId: 'verifyOtp',
   tags: [TAG],
-  summary: 'Sign in with email + password',
+  summary: 'Verify the OTP and sign in',
   security: [], // public
   description:
-    'Exchanges credentials for a token pair.\n\n' +
-    'A wrong password and an unknown email return the *same* 401, on purpose: the API will not confirm whether an address is registered.\n\n' +
-    'Seeded dev accounts: `customer@shop.test`, `staff@shop.test`, `admin@shop.test` — all with password `Password123!`.',
+    'Step 2: exchanges a phone + code for a token pair. On the very first successful verify for a number, a `CUSTOMER` account is created — so this is both sign-up and sign-in.\n\n' +
+    'Existing `STAFF` / `ADMIN` numbers sign in with their stored role, which is what the app uses to pick the shell (customer, staff, or admin).\n\n' +
+    'Codes are single-use and expire (`OTP_TTL_MINUTES`). Too many wrong attempts (`OTP_MAX_ATTEMPTS`) burns the challenge — request a new code.',
   request: {
     body: {
       required: true,
-      content: { 'application/json': { schema: loginSchema } },
+      content: { 'application/json': { schema: otpVerifySchema } },
     },
   },
   responses: {
@@ -144,11 +165,11 @@ registry.registerPath({
     },
     401: {
       ...responses.unauthorized,
-      description: 'Unknown email or wrong password (deliberately indistinguishable).',
+      description: 'The code is wrong, expired, already used, or out of attempts.',
       content: {
         'application/json': {
           schema: responses.unauthorized.content!['application/json']!.schema,
-          example: { error: { code: 'UNAUTHORIZED', message: 'Invalid email or password' } },
+          example: { error: { code: 'UNAUTHORIZED', message: 'Invalid or expired code' } },
         },
       },
     },

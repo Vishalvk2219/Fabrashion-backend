@@ -3,7 +3,7 @@
   "info": {
     "title": "Fabrashion API",
     "version": "0.1.0",
-    "description": "Backend for **Fabrashion**, a premium clothing store: catalogue, cart, orders, and at-home trials.\nThis spec is generated from the Zod schemas the server validates against, so it always matches the running code.\n\n## Authentication\nEverything except `/health` and the auth entry points expects a bearer token:\n\n1. `POST /api/v1/auth/register` or `/login` → returns `{ user, accessToken, refreshToken }`.\n2. Send `Authorization: Bearer <accessToken>` on subsequent calls.\n3. The access token lasts **15 minutes**. On a 401, call `POST /api/v1/auth/refresh` with your refresh token and retry.\n\nRefresh tokens are **single-use and rotated**: each refresh returns a new one and kills the old. Persist the new pair every time, and never run two refreshes concurrently — replaying a rotated token is read as theft and signs the user out of every device.\n\n## Errors\nEvery failure uses one envelope — see the `Error` schema:\n\n```json\n{ \"error\": { \"code\": \"UNAUTHORIZED\", \"message\": \"Invalid email or password\" } }\n```\n\nBranch on `error.code` (stable), never on `message` (copy, may change). A 422 adds `details.fieldErrors`, mapping each rejected field to its messages — render those inline on the form.\n\n## Conventions\n- **Money** is always an integer count of **paise** (₹1 = 100 paise), in fields suffixed `Paise`. Never floats.\n- **Timestamps** are UTC ISO-8601 strings.\n- **Ids** are UUIDs.\n- **Phone numbers** are submitted as 10 digits and stored E.164 (`+91XXXXXXXXXX`).\n- Every response carries an **`x-request-id`**; send your own to correlate, and quote it in bug reports.\n\n## Rate limits\nThe `/auth/*` endpoints allow **30 requests per 15 minutes per IP**. Over that you get a 429 with `Retry-After`.",
+    "description": "Backend for **Fabrashion**, a premium clothing store: catalogue, cart, orders, and at-home trials.\nThis spec is generated from the Zod schemas the server validates against, so it always matches the running code.\n\n## Authentication\nEverything except `/health` and the auth entry points expects a bearer token:\n\n1. `POST /api/v1/auth/otp/request` with a phone number, then `POST /api/v1/auth/otp/verify` with the code → returns `{ user, accessToken, refreshToken }`. Phone-OTP is the only login method; first verify creates the account.\n2. Send `Authorization: Bearer <accessToken>` on subsequent calls.\n3. The access token lasts **15 minutes**. On a 401, call `POST /api/v1/auth/refresh` with your refresh token and retry.\n\nRefresh tokens are **single-use and rotated**: each refresh returns a new one and kills the old. Persist the new pair every time, and never run two refreshes concurrently — replaying a rotated token is read as theft and signs the user out of every device.\n\n## Errors\nEvery failure uses one envelope — see the `Error` schema:\n\n```json\n{ \"error\": { \"code\": \"UNAUTHORIZED\", \"message\": \"Invalid email or password\" } }\n```\n\nBranch on `error.code` (stable), never on `message` (copy, may change). A 422 adds `details.fieldErrors`, mapping each rejected field to its messages — render those inline on the form.\n\n## Conventions\n- **Money** is always an integer count of **paise** (₹1 = 100 paise), in fields suffixed `Paise`. Never floats.\n- **Timestamps** are UTC ISO-8601 strings.\n- **Ids** are UUIDs.\n- **Phone numbers** are submitted as 10 digits and stored E.164 (`+91XXXXXXXXXX`).\n- Every response carries an **`x-request-id`**; send your own to correlate, and quote it in bug reports.\n\n## Rate limits\nThe `/auth/*` endpoints allow **30 requests per 15 minutes per IP**. Over that you get a 429 with `Retry-After`.",
     "contact": {
       "name": "Fabrashion Engineering",
       "email": "support@teachtotech.in"
@@ -31,7 +31,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "Short-lived (15 min) access token from `POST /auth/login`, sent as `Authorization: Bearer <accessToken>`. When it expires the API returns 401 UNAUTHORIZED — exchange the refresh token at `POST /auth/refresh` for a new pair."
+        "description": "Short-lived (15 min) access token from `POST /auth/otp/verify`, sent as `Authorization: Bearer <accessToken>`. When it expires the API returns 401 UNAUTHORIZED — exchange the refresh token at `POST /auth/refresh` for a new pair."
       }
     },
     "schemas": {
@@ -309,62 +309,58 @@
         ],
         "description": "The signed-in user plus a new token pair."
       },
-      "RegisterRequest": {
+      "OtpRequestResponse": {
         "type": "object",
         "properties": {
-          "fullName": {
-            "type": "string",
-            "minLength": 2,
-            "maxLength": 100,
-            "description": "Customer full name.",
-            "example": "Aarav Sharma"
+          "expiresInSec": {
+            "type": "integer",
+            "description": "Seconds until the code expires. Drives the resend countdown in the app.",
+            "example": 300
           },
-          "email": {
+          "devCode": {
             "type": "string",
-            "format": "email",
-            "description": "Login email. Normalised to lowercase; must not already be in use.",
-            "example": "aarav.sharma@example.com"
-          },
+            "description": "The OTP itself, so the flow is walkable without an SMS provider. Only present when `OTP_EXPOSE_CODE` is on and `NODE_ENV` is not production — never in production.",
+            "example": "1234"
+          }
+        },
+        "required": [
+          "expiresInSec"
+        ],
+        "description": "Confirmation that an OTP was sent. Never contains the user."
+      },
+      "OtpRequest": {
+        "type": "object",
+        "properties": {
+          "phone": {
+            "type": "string",
+            "pattern": "^[6-9]\\d{9}$",
+            "description": "Indian mobile number: 10 digits starting 6-9, no country code. Stored as +91XXXXXXXXXX.",
+            "example": "9876543210"
+          }
+        },
+        "required": [
+          "phone"
+        ]
+      },
+      "OtpVerifyRequest": {
+        "type": "object",
+        "properties": {
           "phone": {
             "type": "string",
             "pattern": "^[6-9]\\d{9}$",
             "description": "Indian mobile number: 10 digits starting 6-9, no country code. Stored as +91XXXXXXXXXX.",
             "example": "9876543210"
           },
-          "password": {
+          "code": {
             "type": "string",
-            "minLength": 8,
-            "maxLength": 128,
-            "format": "password",
-            "description": "8-128 characters.",
-            "example": "Password123!"
+            "pattern": "^\\d{4}$",
+            "description": "The 4-digit code sent by SMS.",
+            "example": "1234"
           }
         },
         "required": [
-          "fullName",
-          "email",
           "phone",
-          "password"
-        ]
-      },
-      "LoginRequest": {
-        "type": "object",
-        "properties": {
-          "email": {
-            "type": "string",
-            "format": "email",
-            "example": "customer@shop.test"
-          },
-          "password": {
-            "type": "string",
-            "minLength": 1,
-            "format": "password",
-            "example": "Password123!"
-          }
-        },
-        "required": [
-          "email",
-          "password"
+          "code"
         ]
       },
       "RefreshRequest": {
@@ -373,7 +369,7 @@
           "refreshToken": {
             "type": "string",
             "minLength": 1,
-            "description": "The opaque refresh token last issued by register, login, or refresh.",
+            "description": "The opaque refresh token last issued by OTP verify or refresh.",
             "example": "3f6d1c9a5b8e4d2f7a0c1e9b4d6f8a2c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f"
           }
         },
@@ -530,29 +526,29 @@
         }
       }
     },
-    "/api/v1/auth/register": {
+    "/api/v1/auth/otp/request": {
       "post": {
-        "operationId": "register",
+        "operationId": "requestOtp",
         "tags": [
           "Auth"
         ],
-        "summary": "Create an account",
+        "summary": "Send a login OTP to a phone number",
         "security": [],
-        "description": "Registers an email/password account and signs the user straight in — the response already carries a token pair, so no follow-up login call is needed.\n\nThe phone number is stored (prefixed `+91`) for delivery and the upcoming OTP login; it is not verified yet. Email and phone must both be unused, otherwise 409.",
+        "description": "Sends a 4-digit code by SMS to the given mobile number. This is step 1 of the only login method — there is no password anywhere in the API; email is profile data, never a credential.\n\nThe response is deliberately identical whether or not the number already has an account: the API will not confirm whether a phone is registered. An account is created on first successful verify.\n\nA resend cooldown applies on top of the route rate limiter, so calling this in a tight loop returns 429.",
         "requestBody": {
           "required": true,
-          "description": "New account details.",
+          "description": "The mobile number to send the code to.",
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RegisterRequest"
+                "$ref": "#/components/schemas/OtpRequest"
               }
             }
           }
         },
         "responses": {
-          "201": {
-            "description": "Account created and signed in.",
+          "200": {
+            "description": "Code sent (or re-sent). Prompt the user for it, then call `/auth/otp/verify`.",
             "headers": {
               "x-request-id": {
                 "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
@@ -579,43 +575,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AuthResponse"
+                  "$ref": "#/components/schemas/OtpRequestResponse"
                 },
                 "example": {
-                  "user": {
-                    "id": "b1d1f0a4-4c9e-4b9a-9c1e-2f3a4b5c6d7e",
-                    "fullName": "Aarav Sharma",
-                    "email": "aarav.sharma@example.com",
-                    "phone": "+919876543210",
-                    "role": "CUSTOMER"
-                  },
-                  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiMWQxZjBhNC00YzllLTRiOWEtOWMxZS0yZjNhNGI1YzZkN2UiLCJyb2xlIjoiQ1VTVE9NRVIiLCJpYXQiOjE3NTIzOTA0MDAsImV4cCI6MTc1MjM5MTMwMH0.9x2QpQ0rQ6m2mVQ0F6bqK3nqfQ0X1yQ0m8rQ0y9kQ2s",
-                  "refreshToken": "3f6d1c9a5b8e4d2f7a0c1e9b4d6f8a2c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The request conflicts with existing state.",
-            "headers": {
-              "x-request-id": {
-                "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
-                "schema": {
-                  "type": "string",
-                  "example": "0f5c2f2e-9a1e-4a2b-9c1d-5b8f0a3c7e21"
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                },
-                "example": {
-                  "error": {
-                    "code": "CONFLICT",
-                    "message": "An account with this email or phone already exists"
-                  }
+                  "expiresInSec": 300,
+                  "devCode": "1234"
                 }
               }
             }
@@ -730,21 +694,21 @@
         }
       }
     },
-    "/api/v1/auth/login": {
+    "/api/v1/auth/otp/verify": {
       "post": {
-        "operationId": "login",
+        "operationId": "verifyOtp",
         "tags": [
           "Auth"
         ],
-        "summary": "Sign in with email + password",
+        "summary": "Verify the OTP and sign in",
         "security": [],
-        "description": "Exchanges credentials for a token pair.\n\nA wrong password and an unknown email return the *same* 401, on purpose: the API will not confirm whether an address is registered.\n\nSeeded dev accounts: `customer@shop.test`, `staff@shop.test`, `admin@shop.test` — all with password `Password123!`.",
+        "description": "Step 2: exchanges a phone + code for a token pair. On the very first successful verify for a number, a `CUSTOMER` account is created — so this is both sign-up and sign-in.\n\nExisting `STAFF` / `ADMIN` numbers sign in with their stored role, which is what the app uses to pick the shell (customer, staff, or admin).\n\nCodes are single-use and expire (`OTP_TTL_MINUTES`). Too many wrong attempts (`OTP_MAX_ATTEMPTS`) burns the challenge — request a new code.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/LoginRequest"
+                "$ref": "#/components/schemas/OtpVerifyRequest"
               }
             }
           }
@@ -795,7 +759,7 @@
             }
           },
           "401": {
-            "description": "Unknown email or wrong password (deliberately indistinguishable).",
+            "description": "The code is wrong, expired, already used, or out of attempts.",
             "headers": {
               "x-request-id": {
                 "description": "Correlation id for this request — taken from the inbound `x-request-id` if you send one, otherwise generated. Appears on every log line for the request.",
@@ -813,7 +777,7 @@
                 "example": {
                   "error": {
                     "code": "UNAUTHORIZED",
-                    "message": "Invalid email or password"
+                    "message": "Invalid or expired code"
                   }
                 }
               }

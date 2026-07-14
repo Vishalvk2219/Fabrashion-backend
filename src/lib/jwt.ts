@@ -17,7 +17,9 @@ export function signAccessToken(payload: AccessTokenPayload): string {
 
 /** Verify + narrow an access token. Throws if the signature/claims are invalid. */
 export function verifyAccessToken(token: string): AccessTokenPayload {
-  const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET);
+  // Pin the algorithm so a token forged with `alg:none` or an HS/RS confusion is rejected
+  // regardless of jsonwebtoken's defaults. Tokens are signed HS256 (symmetric secret). [SEC-002]
+  const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET, { algorithms: ['HS256'] });
   if (typeof decoded === 'string') {
     throw new Error('Unexpected string token payload');
   }

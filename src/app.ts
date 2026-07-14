@@ -17,6 +17,11 @@ export function createApp() {
   const app = express();
 
   app.disable('x-powered-by');
+  // Behind one reverse proxy in dev (VS Code dev tunnel) and in hosting, so the
+  // client IP arrives in `X-Forwarded-For`. Trust a single hop so `req.ip` (and
+  // express-rate-limit's per-client keying) uses the real client, not the proxy.
+  // Bump this to match the actual number of trusted proxies in production.
+  app.set('trust proxy', 1);
   app.use(helmet());
   app.use(cors({ origin: env.corsOrigins }));
   app.use(express.json({ limit: '1mb' }));

@@ -36,6 +36,32 @@ const EnvSchema = z.object({
   JWT_ACCESS_TTL: z.string().default('15m'),
   // Refresh-token lifetime in days (used to compute the DB `expiresAt`).
   JWT_REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),
+
+  // --- Phone-OTP login (Phase 1) ---
+  // OTP is a 4-digit code sent by SMS (MSG91 in prod). Login is phone-only; email is profile data.
+  OTP_TTL_MINUTES: z.coerce.number().int().positive().default(5),
+  OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+  // Cooldown before a new code can be requested for the same phone.
+  OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().nonnegative().default(30),
+  // Dev/test convenience: return the OTP in the request response so the flow is walkable
+  // without an SMS provider. FORCED OFF in production regardless of this value.
+  OTP_EXPOSE_CODE: z
+    .string()
+    .transform((v) => v === 'true' || v === '1')
+    .default('true'),
+
+  // --- Shipping (Phase 4) --- flat rate in paise; free at/above the threshold.
+  SHIPPING_FLAT_PAISE: z.coerce.number().int().nonnegative().default(4900),
+  FREE_SHIPPING_THRESHOLD_PAISE: z.coerce.number().int().positive().default(499900),
+
+  // --- At-Home Trials (Phase 6, plan 19) --- fraud/logistics guards + the trial window.
+  TRIAL_MAX_ITEMS: z.coerce.number().int().positive().default(5),
+  TRIAL_MAX_ACTIVE: z.coerce.number().int().positive().default(2),
+  TRIAL_MAX_VALUE_PAISE: z.coerce.number().int().positive().default(5000000),
+  // Keep/return window after delivery; past it, undecided items auto-return (plan 07 policy).
+  TRIAL_WINDOW_HOURS: z.coerce.number().int().positive().default(48),
+  // Bookings a store can take per calendar day (all slot windows combined).
+  TRIAL_SLOT_CAPACITY: z.coerce.number().int().positive().default(8),
 });
 
 const parsed = EnvSchema.safeParse(process.env);
@@ -71,6 +97,8 @@ export const env = {
   isTest: data.NODE_ENV === 'test',
   /** Parsed CORS origins for the `cors` middleware: `*` or an array of origins. */
   corsOrigins: data.CORS_ORIGINS === '*' ? '*' : data.CORS_ORIGINS.split(',').map((o) => o.trim()),
+  /** Return the OTP in the request response (dev/test only) — never in production. */
+  exposeOtpCode: data.OTP_EXPOSE_CODE && data.NODE_ENV !== 'production',
 } as const;
 
 export type Env = typeof env;

@@ -4,24 +4,41 @@ import request from 'supertest';
 import { createApp } from '@/app';
 
 // Integration tests — require a running Postgres (docker:up + migrated schema).
+// OTP_EXPOSE_CODE is on outside production, so the request response carries `devCode`.
 const app = createApp();
 
-const unique = Date.now();
-const newUser = {
-  fullName: 'Test User',
-  email: `test-${unique}@example.com`,
-  phone: `9${String(unique).slice(-9)}`, // 10 digits starting with 9
-  password: 'Password123!',
-};
+const phone = `9${String(Date.now()).slice(-9)}`; // 10 digits starting with 9
 
-describe('auth module', () => {
+describe('auth module (phone-OTP)', () => {
   let accessToken = '';
   let refreshToken = '';
+  let devCode = '';
 
-  it('registers a new user (201) with a user + tokens', async () => {
-    const res = await request(app).post('/api/v1/auth/register').send(newUser);
-    expect(res.status).toBe(201);
-    expect(res.body.user).toMatchObject({ email: newUser.email, role: 'CUSTOMER' });
+  it('requests an OTP (200) and returns a dev code', async () => {
+    const res = await request(app).post('/api/v1/auth/otp/request').send({ phone });
+    expect(res.status).toBe(200);
+    expect(res.body.expiresInSec).toBeGreaterThan(0);
+    expect(res.body.devCode).toMatch(/^\d{4}$/);
+    devCode = res.body.devCode;
+  });
+
+  it('rejects an invalid phone (422 VALIDATION_ERROR)', async () => {
+    const res = await request(app).post('/api/v1/auth/otp/request').send({ phone: '12345' });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects a wrong code (401 UNAUTHORIZED)', async () => {
+    const wrong = devCode === '0000' ? '1111' : '0000';
+    const res = await request(app).post('/api/v1/auth/otp/verify').send({ phone, code: wrong });
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe('UNAUTHORIZED');
+  });
+
+  it('verifies the OTP (200), creating a CUSTOMER account with tokens', async () => {
+    const res = await request(app).post('/api/v1/auth/otp/verify').send({ phone, code: devCode });
+    expect(res.status).toBe(200);
+    expect(res.body.user).toMatchObject({ phone: `+91${phone}`, role: 'CUSTOMER' });
     expect(res.body.user.passwordHash).toBeUndefined();
     expect(res.body.accessToken).toBeTruthy();
     expect(res.body.refreshToken).toBeTruthy();
@@ -29,32 +46,10 @@ describe('auth module', () => {
     refreshToken = res.body.refreshToken;
   });
 
-  it('rejects duplicate registration (409 CONFLICT)', async () => {
-    const res = await request(app).post('/api/v1/auth/register').send(newUser);
-    expect(res.status).toBe(409);
-    expect(res.body.error.code).toBe('CONFLICT');
-  });
-
-  it('rejects an invalid register body (422 VALIDATION_ERROR)', async () => {
-    const res = await request(app).post('/api/v1/auth/register').send({ email: 'nope' });
-    expect(res.status).toBe(422);
-    expect(res.body.error.code).toBe('VALIDATION_ERROR');
-  });
-
-  it('logs in with correct credentials (200)', async () => {
-    const res = await request(app)
-      .post('/api/v1/auth/login')
-      .send({ email: newUser.email, password: newUser.password });
-    expect(res.status).toBe(200);
-    expect(res.body.accessToken).toBeTruthy();
-  });
-
-  it('rejects a wrong password with a generic 401', async () => {
-    const res = await request(app)
-      .post('/api/v1/auth/login')
-      .send({ email: newUser.email, password: 'wrong-password' });
-    expect(res.status).toBe(401);
-    expect(res.body.error.code).toBe('UNAUTHORIZED');
+  it('rejects reusing a consumed code (400 BAD_REQUEST)', async () => {
+    const res = await request(app).post('/api/v1/auth/otp/verify').send({ phone, code: devCode });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('BAD_REQUEST');
   });
 
   it('returns the current user for GET /me with a valid token', async () => {
@@ -62,7 +57,7 @@ describe('auth module', () => {
       .get('/api/v1/auth/me')
       .set('Authorization', `Bearer ${accessToken}`);
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ email: newUser.email, role: 'CUSTOMER' });
+    expect(res.body).toMatchObject({ phone: `+91${phone}`, role: 'CUSTOMER' });
   });
 
   it('rejects GET /me without a token (401)', async () => {

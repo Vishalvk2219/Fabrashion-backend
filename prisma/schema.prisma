@@ -14,20 +14,27 @@ datasource db {
 // ─────────────────────────── AUTH ───────────────────────────
 
 model User {
-  id            String         @id @default(uuid())
-  email         String?        @unique // optional: phone-only accounts have no email
-  phone         String?        @unique // optional: email-only accounts have no phone
-  passwordHash  String? // null for phone-OTP-only accounts
-  phoneVerified Boolean        @default(false)
-  fullName      String
-  role          UserRole       @default(CUSTOMER)
-  addresses     Address[]
-  carts         Cart[]
-  orders        Order[]
-  trials        TrialBooking[]
-  refreshTokens RefreshToken[]
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id               String         @id @default(uuid())
+  email            String?        @unique // optional: phone-only accounts have no email
+  phone            String?        @unique // optional: email-only accounts have no phone
+  passwordHash     String? // null for phone-OTP-only accounts
+  phoneVerified    Boolean        @default(false)
+  fullName         String
+  role             UserRole       @default(CUSTOMER)
+  // Back-office: boutique a STAFF account works at (staff APIs are scoped to it).
+  store            Store?         @relation(fields: [storeId], references: [id])
+  storeId          String?
+  // Add-Staff permission toggles, persisted verbatim; authorization is role-based for now.
+  staffPermissions Json?
+  addresses        Address[]
+  carts            Cart[]
+  orders           Order[]
+  trials           TrialBooking[]
+  refreshTokens    RefreshToken[]
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([role])
 }
 
 enum UserRole {
@@ -37,21 +44,30 @@ enum UserRole {
 }
 
 model Address {
-  id        String   @id @default(uuid())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId    String
-  line1     String
-  line2     String?
-  city      String
-  state     String
-  pincode   String
-  isDefault Boolean  @default(false)
-  geoLat    Float?
-  geoLng    Float?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String       @id @default(uuid())
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         String
+  label          AddressLabel @default(HOME)
+  recipientName  String       @default("")
+  recipientPhone String       @default("")
+  line1          String
+  line2          String?
+  city           String
+  state          String
+  pincode        String
+  isDefault      Boolean      @default(false)
+  geoLat         Float?
+  geoLng         Float?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   @@index([userId])
+}
+
+enum AddressLabel {
+  HOME
+  WORK
+  OTHER
 }
 
 model RefreshToken {
@@ -117,12 +133,17 @@ model Product {
   gstRatePct       Int              @default(0) // prices are GST-inclusive; used to break out tax
   hsnCode          String? // HSN/SAC for GST invoicing
   trialEligible    Boolean          @default(false)
+  // Denormalized from variants for fast list sort + price-range filter (Prisma can't order by a
+  // to-many aggregate). The catalog write path must recompute these when variant prices change.
+  minPricePaise    Int              @default(0)
+  maxPricePaise    Int              @default(0)
   variants         ProductVariant[]
   images           ProductImage[]
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 
   @@index([department, categoryId])
+  @@index([minPricePaise])
 }
 
 enum Department {
@@ -193,6 +214,7 @@ model Store {
   syncEnabled Boolean        @default(true) // counts toward online availability?
   inventory   Inventory[]
   trials      TrialBooking[]
+  staff       User[]
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 }
@@ -205,8 +227,9 @@ model Inventory {
   warehouseId       String?
   store             Store?             @relation(fields: [storeId], references: [id])
   storeId           String?
-  quantityAvailable Int                @default(0) // sellable now
+  quantityAvailable Int                @default(0) // sellable now (staff "floor")
   quantityReserved  Int                @default(0) // held by pending orders
+  quantityOnCounter Int                @default(0) // in-store: fitting room / billing (not online-sellable)
   quantityOnTrial   Int                @default(0) // out for home trials
   version           Int                @default(0) // optimistic concurrency for sync
   syncLogs          InventorySyncLog[]
@@ -345,23 +368,28 @@ enum PaymentStatus {
 // ────────────────────── AT-HOME TRIAL ───────────────────────
 
 model TrialBooking {
-  id              String      @id @default(uuid())
-  user            User        @relation(fields: [userId], references: [id])
-  userId          String
-  status          TrialStatus @default(REQUESTED)
-  address         Json // snapshot of trial address
-  slotStart       DateTime
-  slotEnd         DateTime
-  store           Store?      @relation(fields: [storeId], references: [id]) // fulfilling store
-  storeId         String?
-  authAmountPaise Int         @default(0) // trial value held (v1: charged, refunded on return)
-  paymentRef      String?
-  items           TrialItem[]
-  orders          Order[] // conversion order(s)
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  id                String      @id @default(uuid())
+  user              User        @relation(fields: [userId], references: [id])
+  userId            String
+  status            TrialStatus @default(REQUESTED)
+  address           Json // snapshot of trial address
+  note              String? // delivery instructions from the customer
+  slotStart         DateTime
+  slotEnd           DateTime
+  store             Store?      @relation(fields: [storeId], references: [id]) // fulfilling store
+  storeId           String?
+  authAmountPaise   Int         @default(0) // trial value held (v1: charged, refunded on return)
+  paymentRef        String?
+  paymentCapturedAt DateTime? // null = charge pending (dev-confirm / PhonePe 4c sets it)
+  refundPaise       Int         @default(0) // recorded refund for returns/cancel (real refund in 4c)
+  trialEndsAt       DateTime? // set on delivery; past it the sweeper auto-returns undecided items
+  items             TrialItem[]
+  orders            Order[] // conversion order(s)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
 
   @@index([userId])
+  @@index([storeId, status])
 }
 
 enum TrialStatus {

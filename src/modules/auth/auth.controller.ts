@@ -2,18 +2,20 @@ import type { RequestHandler } from 'express';
 
 import { UnauthorizedError } from '@/lib/errors';
 import { authService } from './auth.service';
-import type { LoginInput, RefreshInput, RegisterInput } from './auth.schema';
+import type { OtpRequestInput, OtpVerifyInput, RefreshInput } from './auth.schema';
 
 // Bodies are already Zod-validated by `validate(...)` middleware.
 // Express 5 forwards rejected promises to the central errorHandler.
 
-export const register: RequestHandler = async (req, res) => {
-  const result = await authService.register(req.body as RegisterInput);
-  res.status(201).json(result);
+export const requestOtp: RequestHandler = async (req, res) => {
+  const { phone } = req.body as OtpRequestInput;
+  const result = await authService.requestOtp(phone);
+  res.status(200).json(result);
 };
 
-export const login: RequestHandler = async (req, res) => {
-  const result = await authService.login(req.body as LoginInput);
+export const verifyOtp: RequestHandler = async (req, res) => {
+  const { phone, code } = req.body as OtpVerifyInput;
+  const result = await authService.verifyOtp(phone, code);
   res.status(200).json(result);
 };
 

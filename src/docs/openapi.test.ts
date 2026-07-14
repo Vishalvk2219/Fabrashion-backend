@@ -12,8 +12,8 @@ const app = createApp();
 const EXPECTED_OPERATIONS = [
   'get /health',
   'get /api/v1',
-  'post /api/v1/auth/register',
-  'post /api/v1/auth/login',
+  'post /api/v1/auth/otp/request',
+  'post /api/v1/auth/otp/verify',
   'post /api/v1/auth/refresh',
   'post /api/v1/auth/logout',
   'get /api/v1/auth/me',

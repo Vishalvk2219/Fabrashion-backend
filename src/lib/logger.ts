@@ -7,6 +7,9 @@ import { env } from '@/config/env';
  */
 export const logger = pino({
   level: env.LOG_LEVEL,
+  // Defense-in-depth: pino-http's default request serializer logs headers. Never write the
+  // Bearer token / cookies to logs. [SEC-001]
+  redact: { paths: ['req.headers.authorization', 'req.headers.cookie'], censor: '[redacted]' },
   ...(env.isDev
     ? {
         transport: {

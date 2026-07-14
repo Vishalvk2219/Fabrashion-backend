@@ -16,8 +16,10 @@ info:
     token:
 
 
-    1. `POST /api/v1/auth/register` or `/login` → returns `{ user, accessToken,
-    refreshToken }`.
+    1. `POST /api/v1/auth/otp/request` with a phone number, then `POST
+    /api/v1/auth/otp/verify` with the code → returns `{ user, accessToken,
+    refreshToken }`. Phone-OTP is the only login method; first verify creates
+    the account.
 
     2. Send `Authorization: Bearer <accessToken>` on subsequent calls.
 
@@ -86,10 +88,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: "Short-lived (15 min) access token from `POST /auth/login`, sent as
-        `Authorization: Bearer <accessToken>`. When it expires the API returns
-        401 UNAUTHORIZED — exchange the refresh token at `POST /auth/refresh`
-        for a new pair."
+      description: "Short-lived (15 min) access token from `POST /auth/otp/verify`,
+        sent as `Authorization: Bearer <accessToken>`. When it expires the API
+        returns 401 UNAUTHORIZED — exchange the refresh token at `POST
+        /auth/refresh` for a new pair."
   schemas:
     Error:
       type: object
@@ -300,60 +302,58 @@ components:
         - accessToken
         - refreshToken
       description: The signed-in user plus a new token pair.
-    RegisterRequest:
+    OtpRequestResponse:
       type: object
       properties:
-        fullName:
+        expiresInSec:
+          type: integer
+          description: Seconds until the code expires. Drives the resend countdown in the
+            app.
+          example: 300
+        devCode:
           type: string
-          minLength: 2
-          maxLength: 100
-          description: Customer full name.
-          example: Aarav Sharma
-        email:
-          type: string
-          format: email
-          description: Login email. Normalised to lowercase; must not already be in use.
-          example: aarav.sharma@example.com
+          description: The OTP itself, so the flow is walkable without an SMS provider.
+            Only present when `OTP_EXPOSE_CODE` is on and `NODE_ENV` is not
+            production — never in production.
+          example: "1234"
+      required:
+        - expiresInSec
+      description: Confirmation that an OTP was sent. Never contains the user.
+    OtpRequest:
+      type: object
+      properties:
         phone:
           type: string
           pattern: ^[6-9]\d{9}$
           description: "Indian mobile number: 10 digits starting 6-9, no country code.
             Stored as +91XXXXXXXXXX."
           example: "9876543210"
-        password:
-          type: string
-          minLength: 8
-          maxLength: 128
-          format: password
-          description: 8-128 characters.
-          example: Password123!
       required:
-        - fullName
-        - email
         - phone
-        - password
-    LoginRequest:
+    OtpVerifyRequest:
       type: object
       properties:
-        email:
+        phone:
           type: string
-          format: email
-          example: customer@shop.test
-        password:
+          pattern: ^[6-9]\d{9}$
+          description: "Indian mobile number: 10 digits starting 6-9, no country code.
+            Stored as +91XXXXXXXXXX."
+          example: "9876543210"
+        code:
           type: string
-          minLength: 1
-          format: password
-          example: Password123!
+          pattern: ^\d{4}$
+          description: The 4-digit code sent by SMS.
+          example: "1234"
       required:
-        - email
-        - password
+        - phone
+        - code
     RefreshRequest:
       type: object
       properties:
         refreshToken:
           type: string
           minLength: 1
-          description: The opaque refresh token last issued by register, login, or refresh.
+          description: The opaque refresh token last issued by OTP verify or refresh.
           example: 3f6d1c9a5b8e4d2f7a0c1e9b4d6f8a2c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f
       required:
         - refreshToken
@@ -449,32 +449,37 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
               example: *a3
-  /api/v1/auth/register:
+  /api/v1/auth/otp/request:
     post:
-      operationId: register
+      operationId: requestOtp
       tags:
         - Auth
-      summary: Create an account
+      summary: Send a login OTP to a phone number
       security: []
       description: >-
-        Registers an email/password account and signs the user straight in — the
-        response already carries a token pair, so no follow-up login call is
-        needed.
+        Sends a 4-digit code by SMS to the given mobile number. This is step 1
+        of the only login method — there is no password anywhere in the API;
+        email is profile data, never a credential.
 
 
-        The phone number is stored (prefixed `+91`) for delivery and the
-        upcoming OTP login; it is not verified yet. Email and phone must both be
-        unused, otherwise 409.
+        The response is deliberately identical whether or not the number already
+        has an account: the API will not confirm whether a phone is registered.
+        An account is created on first successful verify.
+
+
+        A resend cooldown applies on top of the route rate limiter, so calling
+        this in a tight loop returns 429.
       requestBody:
         required: true
-        description: New account details.
+        description: The mobile number to send the code to.
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RegisterRequest"
+              $ref: "#/components/schemas/OtpRequest"
       responses:
-        "201":
-          description: Account created and signed in.
+        "200":
+          description: Code sent (or re-sent). Prompt the user for it, then call
+            `/auth/otp/verify`.
           headers: &a7
             x-request-id: *a4
             RateLimit: &a5
@@ -491,27 +496,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthResponse"
-              example: &a8
-                user: &a12
-                  id: b1d1f0a4-4c9e-4b9a-9c1e-2f3a4b5c6d7e
-                  fullName: Aarav Sharma
-                  email: aarav.sharma@example.com
-                  phone: "+919876543210"
-                  role: CUSTOMER
-                accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiMWQxZjBhNC00YzllLTRiOWEtOWMxZS0yZjNhNGI1YzZkN2UiLCJyb2xlIjoiQ1VTVE9NRVIiLCJpYXQiOjE3NTIzOTA0MDAsImV4cCI6MTc1MjM5MTMwMH0.9x2QpQ0rQ6m2mVQ0F6bqK3nqfQ0X1yQ0m8rQ0y9kQ2s
-                refreshToken: 3f6d1c9a5b8e4d2f7a0c1e9b4d6f8a2c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f
-        "409":
-          description: The request conflicts with existing state.
-          headers: *a2
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
+                $ref: "#/components/schemas/OtpRequestResponse"
               example:
-                error:
-                  code: CONFLICT
-                  message: An account with this email or phone already exists
+                expiresInSec: 300
+                devCode: "1234"
         "422":
           description: The request body failed validation. `details.fieldErrors` maps
             field → messages.
@@ -520,7 +508,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ValidationError"
-              example: &a9
+              example: &a8
                 error:
                   code: VALIDATION_ERROR
                   message: Validation failed
@@ -534,7 +522,7 @@ paths:
         "429":
           description: "Rate limit exceeded: 30 requests per 15 minutes per IP across the
             auth endpoints. Back off and retry after `Retry-After` seconds."
-          headers: &a10
+          headers: &a9
             x-request-id: *a4
             RateLimit: *a5
             RateLimit-Policy: *a6
@@ -547,7 +535,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-              example: &a11
+              example: &a10
                 error:
                   code: TOO_MANY_REQUESTS
                   message: Too many attempts. Please try again later.
@@ -560,29 +548,31 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
               example: *a3
-  /api/v1/auth/login:
+  /api/v1/auth/otp/verify:
     post:
-      operationId: login
+      operationId: verifyOtp
       tags:
         - Auth
-      summary: Sign in with email + password
+      summary: Verify the OTP and sign in
       security: []
       description: >-
-        Exchanges credentials for a token pair.
+        Step 2: exchanges a phone + code for a token pair. On the very first
+        successful verify for a number, a `CUSTOMER` account is created — so
+        this is both sign-up and sign-in.
 
 
-        A wrong password and an unknown email return the *same* 401, on purpose:
-        the API will not confirm whether an address is registered.
+        Existing `STAFF` / `ADMIN` numbers sign in with their stored role, which
+        is what the app uses to pick the shell (customer, staff, or admin).
 
 
-        Seeded dev accounts: `customer@shop.test`, `staff@shop.test`,
-        `admin@shop.test` — all with password `Password123!`.
+        Codes are single-use and expire (`OTP_TTL_MINUTES`). Too many wrong
+        attempts (`OTP_MAX_ATTEMPTS`) burns the challenge — request a new code.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/LoginRequest"
+              $ref: "#/components/schemas/OtpVerifyRequest"
       responses:
         "200":
           description: Signed in.
@@ -591,9 +581,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuthResponse"
-              example: *a8
+              example:
+                user: &a11
+                  id: b1d1f0a4-4c9e-4b9a-9c1e-2f3a4b5c6d7e
+                  fullName: Aarav Sharma
+                  email: aarav.sharma@example.com
+                  phone: "+919876543210"
+                  role: CUSTOMER
+                accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiMWQxZjBhNC00YzllLTRiOWEtOWMxZS0yZjNhNGI1YzZkN2UiLCJyb2xlIjoiQ1VTVE9NRVIiLCJpYXQiOjE3NTIzOTA0MDAsImV4cCI6MTc1MjM5MTMwMH0.9x2QpQ0rQ6m2mVQ0F6bqK3nqfQ0X1yQ0m8rQ0y9kQ2s
+                refreshToken: 3f6d1c9a5b8e4d2f7a0c1e9b4d6f8a2c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f
         "401":
-          description: Unknown email or wrong password (deliberately indistinguishable).
+          description: The code is wrong, expired, already used, or out of attempts.
           headers: *a2
           content:
             application/json:
@@ -602,7 +600,7 @@ paths:
               example:
                 error:
                   code: UNAUTHORIZED
-                  message: Invalid email or password
+                  message: Invalid or expired code
         "422":
           description: The request body failed validation. `details.fieldErrors` maps
             field → messages.
@@ -611,16 +609,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ValidationError"
-              example: *a9
+              example: *a8
         "429":
           description: "Rate limit exceeded: 30 requests per 15 minutes per IP across the
             auth endpoints. Back off and retry after `Retry-After` seconds."
-          headers: *a10
+          headers: *a9
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-              example: *a11
+              example: *a10
         "500":
           description: Unexpected server error. Nothing is leaked; check logs by
             `x-request-id`.
@@ -687,16 +685,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ValidationError"
-              example: *a9
+              example: *a8
         "429":
           description: "Rate limit exceeded: 30 requests per 15 minutes per IP across the
             auth endpoints. Back off and retry after `Retry-After` seconds."
-          headers: *a10
+          headers: *a9
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-              example: *a11
+              example: *a10
         "500":
           description: Unexpected server error. Nothing is leaked; check logs by
             `x-request-id`.
@@ -739,7 +737,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ValidationError"
-              example: *a9
+              example: *a8
         "500":
           description: Unexpected server error. Nothing is leaked; check logs by
             `x-request-id`.
@@ -768,7 +766,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/User"
-              example: *a12
+              example: *a11
         "401":
           description: Missing, malformed, or expired access token.
           headers: *a2
