@@ -1,7 +1,8 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 
 import { createApp } from '@/app';
+import { prisma } from '@/config/db';
 
 const app = createApp();
 
@@ -20,6 +21,13 @@ describe('admin module', () => {
   let adminToken = '';
   let staffToken = '';
   const asAdmin = () => ({ Authorization: `Bearer ${adminToken}` });
+
+  /**
+   * Products this suite creates, torn down below. The catalog suite asserts on
+   * exact product counts against the seed baseline, so anything left behind here
+   * breaks it — and left the whole suite unable to pass twice in a row.
+   */
+  const createdProductIds: string[] = [];
 
   beforeAll(async () => {
     adminToken = await signIn('9000000001');
@@ -64,8 +72,7 @@ describe('admin module', () => {
   it('lists the team with derived Active/Invited status', async () => {
     const res = await request(app).get('/api/v1/admin/staff?limit=50').set(asAdmin());
     expect(res.status).toBe(200);
-    const byPhone = (p: string) =>
-      res.body.data.find((u: { phone: string }) => u.phone === p);
+    const byPhone = (p: string) => res.body.data.find((u: { phone: string }) => u.phone === p);
     expect(byPhone('+919000000002')).toMatchObject({
       role: 'STAFF',
       status: 'ACTIVE',
@@ -80,13 +87,16 @@ describe('admin module', () => {
     const staffList = await request(app).get('/api/v1/admin/staff?limit=50').set(asAdmin());
     const storeId = staffList.body.data.find((u: { store: unknown }) => u.store)?.store.id;
 
-    const created = await request(app).post('/api/v1/admin/staff').set(asAdmin()).send({
-      fullName: 'Test Staffer',
-      phone,
-      role: 'STAFF',
-      storeId,
-      permissions: { inventory: true, orders: false },
-    });
+    const created = await request(app)
+      .post('/api/v1/admin/staff')
+      .set(asAdmin())
+      .send({
+        fullName: 'Test Staffer',
+        phone,
+        role: 'STAFF',
+        storeId,
+        permissions: { inventory: true, orders: false },
+      });
     expect(created.status).toBe(201);
     expect(created.body).toMatchObject({ status: 'INVITED', role: 'STAFF' });
 
@@ -151,11 +161,24 @@ describe('admin module', () => {
         imageUrl: 'https://picsum.photos/seed/trench/800/1000',
         initialWarehouseQty: 6,
         variants: [
-          { size: 'S', colorName: 'Sand', colorHex: '#D6C6A8', pricePaise: 799900, mrpPaise: 999900 },
-          { size: 'M', colorName: 'Sand', colorHex: '#D6C6A8', pricePaise: 849900, mrpPaise: 999900 },
+          {
+            size: 'S',
+            colorName: 'Sand',
+            colorHex: '#D6C6A8',
+            pricePaise: 799900,
+            mrpPaise: 999900,
+          },
+          {
+            size: 'M',
+            colorName: 'Sand',
+            colorHex: '#D6C6A8',
+            pricePaise: 849900,
+            mrpPaise: 999900,
+          },
         ],
       });
     expect(res.status).toBe(201);
+    createdProductIds.push(res.body.id);
     expect(res.body).toMatchObject({
       name,
       minPricePaise: 799900, // denormalized pair maintained by the write path
@@ -184,6 +207,7 @@ describe('admin module', () => {
     };
     const first = await request(app).post('/api/v1/admin/products').set(asAdmin()).send(payload);
     const second = await request(app).post('/api/v1/admin/products').set(asAdmin()).send(payload);
+    createdProductIds.push(first.body.id, second.body.id);
     expect(second.status).toBe(201);
     expect(second.body.slug).toBe(`${first.body.slug}-2`);
   });
@@ -220,5 +244,10 @@ describe('admin module', () => {
       .set(asAdmin());
     expect(cancelled.body.data.length).toBeGreaterThanOrEqual(1);
     for (const order of cancelled.body.data) expect(order.status).toBe('CANCELLED');
+  });
+
+  // Variants, images, and inventory go with the product (FK cascade).
+  afterAll(async () => {
+    await prisma.product.deleteMany({ where: { id: { in: createdProductIds } } });
   });
 });
