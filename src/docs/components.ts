@@ -16,7 +16,15 @@ type ResponseHeaders = Record<
  * failure the same way — and that the spec matches `middleware/errorHandler`.
  */
 
-/** Machine-readable `error.code` values, from `lib/errors` + the rate limiter. */
+/**
+ * Machine-readable `error.code` values.
+ *
+ * The first block is the generic set from `lib/errors` + the rate limiter. The
+ * second is the domain-specific 409s that services raise via `new AppError(409, …)`
+ * — they are part of the contract too, so clients can branch on them, and they
+ * must be listed here or the `Error` schema would advertise an enum that the API
+ * violates in practice.
+ */
 export const ERROR_CODES = [
   'BAD_REQUEST',
   'UNAUTHORIZED',
@@ -26,6 +34,12 @@ export const ERROR_CODES = [
   'VALIDATION_ERROR',
   'TOO_MANY_REQUESTS',
   'INTERNAL_ERROR',
+  // Domain 409s — see staff.service / trial.service.
+  'INSUFFICIENT_STOCK',
+  'ILLEGAL_TRANSITION',
+  'NO_STORE_ASSIGNED',
+  'PAYMENT_PENDING',
+  'NOT_SERVICEABLE',
 ] as const;
 
 /** The uniform error envelope produced by `middleware/errorHandler`. */
@@ -193,3 +207,70 @@ export const responses = {
     },
   ),
 } as const;
+
+/**
+ * A domain-specific 409 (`INSUFFICIENT_STOCK`, `ILLEGAL_TRANSITION`, ...). These
+ * carry the same envelope as `responses.conflict` but name the code the client
+ * should actually branch on, so the reference shows the real failure.
+ */
+export function conflict(description: string, example: ErrorExample): ResponseConfig {
+  return errorResponse(description, example);
+}
+
+/**
+ * The frozen copy of an address stored on an order or a trial at purchase time
+ * (see `checkout.mapper#addressSnapshot`). It is a **snapshot, not a reference**:
+ * editing or deleting the saved `Address` never rewrites one of these.
+ */
+export const addressSnapshotSchema = registry.register(
+  'AddressSnapshot',
+  z
+    .object({
+      line1: z.string().openapi({ example: '221B, 4th Cross, Indiranagar' }),
+      line2: z.string().nullable().openapi({ example: 'Near Metro Station' }),
+      city: z.string().openapi({ example: 'Bengaluru' }),
+      state: z.string().openapi({ example: 'Karnataka' }),
+      pincode: z.string().openapi({ example: '560038' }),
+      geoLat: z.number().nullable().openapi({ description: 'Set once the address is geocoded.', example: 12.9716 }),
+      geoLng: z.number().nullable().openapi({ example: 77.5946 }),
+    })
+    .openapi({
+      description:
+        'Where it was delivered, as recorded at the time. Deliberately has no `id` — it is a copy, not a live link to the user’s address book.',
+    }),
+);
+
+/** `meta` block on every paginated list — mirrors `lib/pagination`. */
+export const paginationMeta = z
+  .object({
+    page: z.number().int().openapi({ example: 1 }),
+    limit: z.number().int().openapi({ example: 20 }),
+    total: z.number().int().openapi({ description: 'Total matching rows.', example: 42 }),
+    totalPages: z.number().int().openapi({ description: 'At least 1, even when empty.', example: 3 }),
+  })
+  .openapi({ description: 'Pagination cursor for the enclosing list.' });
+
+/**
+ * Registers `{ data: T[], meta }` as a named component. Every list endpoint in
+ * the API returns this envelope (see `lib/pagination`), so they all share it.
+ */
+export function paginated<T extends z.ZodTypeAny>(name: string, item: T) {
+  return registry.register(
+    name,
+    z.object({ data: z.array(item), meta: paginationMeta }).openapi({
+      description: 'Paginated list. Read `meta.totalPages` to know when to stop.',
+    }),
+  );
+}
+
+/** Shared `?page=&limit=` query params, as the list schemas coerce them. */
+export const pageQuery = {
+  page: z.coerce.number().int().positive().optional().openapi({
+    description: '1-based page number.',
+    example: 1,
+  }),
+  limit: z.coerce.number().int().positive().optional().openapi({
+    description: 'Rows per page.',
+    example: 20,
+  }),
+};
