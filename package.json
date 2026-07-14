@@ -2,7 +2,7 @@
   "name": "fabrashion-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "Premium clothing e-commerce API — Express + TypeScript + Prisma + PostgreSQL + Redis",
+  "description": "Fabrashion — premium clothing commerce API — Express + TypeScript + Prisma + PostgreSQL + Redis",
   "type": "module",
   "engines": {
     "node": ">=20"
