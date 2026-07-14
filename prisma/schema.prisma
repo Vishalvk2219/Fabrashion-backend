@@ -1,0 +1,393 @@
+// Prisma schema — full data model.
+// Design reference: ../plans/02-database-schema.md
+// Money is integer paise everywhere. Timestamps are UTC (timestamptz).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────── AUTH ───────────────────────────
+
+model User {
+  id            String         @id @default(uuid())
+  email         String?        @unique // optional: phone-only accounts have no email
+  phone         String?        @unique // optional: email-only accounts have no phone
+  passwordHash  String? // null for phone-OTP-only accounts
+  phoneVerified Boolean        @default(false)
+  fullName      String
+  role          UserRole       @default(CUSTOMER)
+  addresses     Address[]
+  carts         Cart[]
+  orders        Order[]
+  trials        TrialBooking[]
+  refreshTokens RefreshToken[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+enum UserRole {
+  CUSTOMER
+  STAFF
+  ADMIN
+}
+
+model Address {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  line1     String
+  line2     String?
+  city      String
+  state     String
+  pincode   String
+  isDefault Boolean  @default(false)
+  geoLat    Float?
+  geoLng    Float?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+/// Phone-OTP login challenges. No user relation: created before an account may exist.
+model OtpChallenge {
+  id         String     @id @default(uuid())
+  phone      String
+  codeHash   String // never store the raw OTP
+  purpose    OtpPurpose @default(LOGIN)
+  attempts   Int        @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime   @default(now())
+
+  @@index([phone, purpose])
+}
+
+enum OtpPurpose {
+  LOGIN
+  SIGNUP
+  PHONE_VERIFY
+}
+
+// ────────────────────────── CATALOG ─────────────────────────
+
+model Category {
+  id        String     @id @default(uuid())
+  name      String
+  slug      String     @unique
+  parent    Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  parentId  String?
+  children  Category[] @relation("CategoryTree")
+  products  Product[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model Product {
+  id               String           @id @default(uuid())
+  name             String
+  slug             String           @unique
+  description      String
+  category         Category         @relation(fields: [categoryId], references: [id])
+  categoryId       String
+  brand            String?
+  // apparel facets (filterable)
+  department       Department       @default(UNISEX)
+  fit              String? // "Slim", "Regular", "Oversized"
+  material         String? // "100% Linen", "Merino Wool"
+  careInstructions String?
+  isActive         Boolean          @default(true)
+  gstRatePct       Int              @default(0) // prices are GST-inclusive; used to break out tax
+  hsnCode          String? // HSN/SAC for GST invoicing
+  trialEligible    Boolean          @default(false)
+  variants         ProductVariant[]
+  images           ProductImage[]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([department, categoryId])
+}
+
+enum Department {
+  MEN
+  WOMEN
+  UNISEX
+  KIDS
+}
+
+model ProductVariant {
+  id         String         @id @default(uuid())
+  product    Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId  String
+  sku        String         @unique
+  barcode    String?        @unique // links to POS scans
+  // the two sellable dimensions for apparel (explicit for fast filtering)
+  size       String // "XS","S","M","L","XL","XXL" or numeric "32"
+  colorName  String // "Midnight Navy"
+  colorHex   String? // "#1A2B3C" for swatch rendering
+  attributes Json           @default("{}") // extra facets (sleeve, pattern, ...)
+  pricePaise Int // GST-inclusive selling price, in paise
+  mrpPaise   Int // strike-through MRP
+  inventory  Inventory[]
+  images     ProductImage[]
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+  trialItems TrialItem[]
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  @@unique([productId, size, colorName])
+  @@index([size])
+  @@index([colorName])
+}
+
+model ProductImage {
+  id        String          @id @default(uuid())
+  url       String
+  altText   String?
+  position  Int             @default(0)
+  product   Product?        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  variantId String?
+
+  @@index([productId])
+  @@index([variantId])
+}
+
+// ─────────────────────── STORES & STOCK ─────────────────────
+
+model Warehouse {
+  id        String      @id @default(uuid())
+  name      String
+  code      String      @unique
+  inventory Inventory[]
+}
+
+model Store {
+  id          String         @id @default(uuid())
+  name        String
+  code        String         @unique // used by POS integration
+  addressLine String
+  city        String
+  pincode     String
+  geoLat      Float?
+  geoLng      Float?
+  syncEnabled Boolean        @default(true) // counts toward online availability?
+  inventory   Inventory[]
+  trials      TrialBooking[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+model Inventory {
+  id                String             @id @default(uuid())
+  variant           ProductVariant     @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  variantId         String
+  warehouse         Warehouse?         @relation(fields: [warehouseId], references: [id])
+  warehouseId       String?
+  store             Store?             @relation(fields: [storeId], references: [id])
+  storeId           String?
+  quantityAvailable Int                @default(0) // sellable now
+  quantityReserved  Int                @default(0) // held by pending orders
+  quantityOnTrial   Int                @default(0) // out for home trials
+  version           Int                @default(0) // optimistic concurrency for sync
+  syncLogs          InventorySyncLog[]
+  updatedAt         DateTime           @updatedAt
+
+  // exactly one location (warehouseId XOR storeId) — enforced in services
+  @@unique([variantId, warehouseId, storeId])
+}
+
+model InventorySyncLog {
+  id              String              @id @default(uuid())
+  inventory       Inventory           @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  inventoryId     String
+  source          String // "store:BLR01", "warehouse", "admin"
+  externalEventId String? // idempotency key from the source
+  changeType      InventoryChangeType
+  deltaQuantity   Int
+  resultingQty    Int
+  payload         Json?
+  createdAt       DateTime            @default(now())
+
+  @@unique([source, externalEventId]) // dedupe replays
+  @@index([inventoryId])
+}
+
+enum InventoryChangeType {
+  SALE_OFFLINE
+  RESTOCK
+  ADJUSTMENT
+  SYNC_RECONCILE
+  RETURN
+}
+
+// ─────────────────────── CART & ORDER ───────────────────────
+
+model Cart {
+  id        String     @id @default(uuid())
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  status    CartStatus @default(ACTIVE)
+  items     CartItem[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([userId])
+}
+
+enum CartStatus {
+  ACTIVE
+  CONVERTED
+  ABANDONED
+}
+
+model CartItem {
+  id        String         @id @default(uuid())
+  cart      Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  cartId    String
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+  variantId String
+  quantity  Int
+
+  @@unique([cartId, variantId])
+}
+
+model Order {
+  id              String        @id @default(uuid())
+  user            User          @relation(fields: [userId], references: [id])
+  userId          String
+  status          OrderStatus   @default(PENDING)
+  source          OrderSource   @default(ONLINE)
+  subtotalPaise   Int // sum of line items (GST-inclusive)
+  taxPaise        Int           @default(0) // GST broken out of the inclusive subtotal
+  shippingPaise   Int           @default(0) // flat rate; 0 when subtotal >= free-shipping threshold
+  totalPaise      Int
+  shippingAddress Json // snapshot at purchase time
+  items           OrderItem[]
+  payment         Payment?
+  trialBooking    TrialBooking? @relation(fields: [trialBookingId], references: [id])
+  trialBookingId  String?
+  placedAt        DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([userId])
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  FULFILLING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum OrderSource {
+  ONLINE
+  TRIAL_CONVERSION
+}
+
+model OrderItem {
+  id             String         @id @default(uuid())
+  order          Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId        String
+  variant        ProductVariant @relation(fields: [variantId], references: [id])
+  variantId      String
+  quantity       Int
+  unitPricePaise Int // price snapshot (GST-inclusive)
+
+  @@index([orderId])
+}
+
+model Payment {
+  id          String        @id @default(uuid())
+  order       Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId     String        @unique
+  provider    String        @default("phonepe")
+  providerRef String? // gateway order/payment id
+  amountPaise Int
+  status      PaymentStatus @default(CREATED)
+  method      String?
+  capturedAt  DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+enum PaymentStatus {
+  CREATED
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUNDED
+}
+
+// ────────────────────── AT-HOME TRIAL ───────────────────────
+
+model TrialBooking {
+  id              String      @id @default(uuid())
+  user            User        @relation(fields: [userId], references: [id])
+  userId          String
+  status          TrialStatus @default(REQUESTED)
+  address         Json // snapshot of trial address
+  slotStart       DateTime
+  slotEnd         DateTime
+  store           Store?      @relation(fields: [storeId], references: [id]) // fulfilling store
+  storeId         String?
+  authAmountPaise Int         @default(0) // trial value held (v1: charged, refunded on return)
+  paymentRef      String?
+  items           TrialItem[]
+  orders          Order[] // conversion order(s)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([userId])
+}
+
+enum TrialStatus {
+  REQUESTED
+  CONFIRMED
+  OUT_FOR_TRIAL
+  IN_TRIAL
+  COMPLETED
+  CANCELLED
+}
+
+model TrialItem {
+  id             String         @id @default(uuid())
+  booking        TrialBooking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingId      String
+  variant        ProductVariant @relation(fields: [variantId], references: [id])
+  variantId      String
+  quantity       Int            @default(1)
+  outcome        TrialOutcome   @default(PENDING)
+  unitPricePaise Int
+
+  @@unique([bookingId, variantId])
+}
+
+enum TrialOutcome {
+  PENDING
+  KEPT
+  RETURNED
+}
